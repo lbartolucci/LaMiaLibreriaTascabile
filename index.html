@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="it" data-tema="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
+<title>La mia libreria tascabile</title>
+<meta name="description" content="La libreria dei libri che ho letto, con le citazioni che mi hanno colpito.">
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#FAF6EF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15120E" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Libreria">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icona-192.png" sizes="192x192">
+
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<div id="app">
+  <header class="app-testa" id="testa">
+    <h1 id="titolo-vista">Libreria</h1>
+  </header>
+
+  <main id="vista" tabindex="-1">
+    <div class="attesa"><span class="attesa__ruota"></span>Apro la libreria…</div>
+  </main>
+</div>
+
+<nav class="tabbar" aria-label="Sezioni principali">
+  <a href="#/libreria" data-tab="libreria">
+    <svg class="icona" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.6A2.6 2.6 0 0 1 6.6 3H19v15.2H6.6A2.6 2.6 0 0 0 4 20.8V5.6Z"/><path d="M4 20.8A2.6 2.6 0 0 1 6.6 18.2H19V21H6.6"/><path d="M8 7.4h7"/></svg>
+    Libreria</a>
+  <a href="#/studio" data-tab="studio">
+    <svg class="icona" viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 19.5 4.2-1.1 9.9-9.9a2.1 2.1 0 0 0-3-3l-9.9 9.9-1.2 4.1Z"/><path d="m14.8 6.2 3 3"/></svg>
+    Studio</a>
+  <a href="#/esplora" data-tab="esplora">
+    <svg class="icona" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.6"/><path d="m15.6 8.4-2.1 5.1-5.1 2.1 2.1-5.1 5.1-2.1Z"/></svg>
+    Esplora</a>
+  <a href="#/impostazioni" data-tab="impostazioni">
+    <svg class="icona" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h5M13 7.5h7M4 16.5h7M15 16.5h5"/><circle cx="11" cy="7.5" r="2"/><circle cx="13" cy="16.5" r="2"/></svg>
+    Impostazioni</a>
+</nav>
+
+<!-- messaggio per chi apre la pagina con JavaScript disattivato -->
+<noscript>
+  <p style="padding:24px;font-family:Georgia,serif">
+    Questa applicazione ha bisogno di JavaScript per funzionare.
+  </p>
+</noscript>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "name": "La mia libreria tascabile",
+  "short_name": "Libreria",
+  "description": "I libri che ho letto e le citazioni che mi hanno colpito, sempre con me.",
+  "lang": "it",
+  "dir": "ltr",
+  "start_url": "./index.html#/libreria",
+  "scope": "./",
+  "id": "libreria-tascabile",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FAF6EF",
+  "theme_color": "#FAF6EF",
+  "categories": ["books", "education", "productivity"],
+  "icons": [
+    { "src": "icons/icona-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icona-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icona-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Aggiungi un libro", "url": "./index.html#/libreria?nuovo=1" },
+    { "name": "Tutte le citazioni", "url": "./index.html#/citazioni" },
+    { "name": "Ripasso di oggi", "url": "./index.html#/studio" }
+  ]
+}
