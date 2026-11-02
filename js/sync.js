@@ -47,6 +47,11 @@ const PAGE = 1000;
 // che può essere già alle spalle del cursore. Rileggerle è innocuo (merge
 // idempotente), perderle no.
 const OVERLAP_MS = 2 * 60 * 1000;
+// Freno sulle cancellazioni: se in un giro sparirebbero più di metà dei record
+// noti (e più di una manciata), non è l'utente che cancella ma il database
+// locale che si è svuotato. Le cancellazioni non partono e si riscarica tutto.
+const FRENO_MIN = 10;
+const FRENO_FRAZIONE = 0.5;
 const AVVISO_SCHEMA = 'Schema Supabase da aggiornare: esegui di nuovo lo script SQL di SUPABASE_SETUP.md (colonna server_at). Fino ad allora le modifiche fatte offline possono non arrivare agli altri dispositivi.';
 
 /** I timestamp che tornano dal server sono nel formato di Postgres: da zero a
@@ -64,15 +69,32 @@ const dbDel = (s, id) => db.cancella(s, id);
 
 let config = { url: '', anonKey: '' };
 let session = null;
-let syncState = { cursor: EPOCH, snapshot: {}, tombstones: {} };
+const statoVuoto = () => ({ cursor: EPOCH, serverCursor: null, snapshot: {}, tombstones: {}, utente: null });
+let syncState = statoVuoto();
 
 export async function loadPersisted () {
   config = (await metaGet('sync.config')) || config;
   session = (await metaGet('sync.session')) || null;
-  syncState = (await metaGet('sync.state')) || syncState;
+  await caricaStato();
+  return { config, session, syncState };
+}
+
+/** Lo stato della sync si rilegge dal database a ogni giro, mai solo dalla
+ *  memoria. Se i dati locali sono stati azzerati («Cancella tutti i dati»,
+ *  import «Sostituisci tutto») lo stato se n'è andato con loro, e la sync
+ *  riparte da zero e riscarica, invece di credere che i record spariti siano
+ *  stati cancellati e di propagare le cancellazioni al cloud (è successo il
+ *  2026-11-02: libreria persa). Lo stato è anche legato all'account: con un
+ *  altro utente si riparte da zero. */
+async function caricaStato (utente = null) {
+  const salvato = await metaGet('sync.state');
+  syncState = salvato ? { ...statoVuoto(), ...salvato } : statoVuoto();
   syncState.snapshot = syncState.snapshot || {};
   syncState.tombstones = syncState.tombstones || {};
-  return { config, session, syncState };
+  if (utente) {
+    if (syncState.utente && syncState.utente !== utente) syncState = statoVuoto();
+    syncState.utente = utente;
+  }
 }
 const metaGet = async k => { const r = await dbGet('meta', k); return r ? r.valore : null; };
 const metaPut = (k, v) => dbPut('meta', { chiave: k, valore: v });
@@ -201,6 +223,8 @@ export async function syncNow ({ silent = false } = {}) {
   let changedLocal = false;
   let warning = '';
   try {
+    await caricaStato(s.user.id);
+
     // 0. garantisci un timestamp reale a ogni record locale
     await normalizeTimestamps();
 
@@ -215,10 +239,13 @@ export async function syncNow ({ silent = false } = {}) {
 
     // 2. local changes + deletes → upserts
     const upserts = [];
+    const cancellazioni = [];
+    let noti = 0;
     const now = new Date().toISOString();
     for (const c of COLLECTIONS) {
       const rows = await dbAll(c);
       const present = new Set();
+      noti += Object.keys(snap(c)).length;
       for (const rec of rows) {
         const id = rec.id; if (id == null) continue; present.add(id);
         const iso = isoOf(rec);
@@ -226,11 +253,19 @@ export async function syncNow ({ silent = false } = {}) {
         if (known == null || parseTs(known) !== Date.parse(iso)) upserts.push(rowFor(c, id, rec, iso, false));
       }
       for (const id of Object.keys(snap(c))) {
-        if (present.has(id)) continue;
-        if (tomb(c)[id]) continue;
-        upserts.push(rowFor(c, id, {}, now, true));
-        tomb(c)[id] = now; delete snap(c)[id];
+        if (present.has(id) || tomb(c)[id]) continue;
+        cancellazioni.push(rowFor(c, id, {}, now, true));
       }
+    }
+    if (cancellazioni.length > FRENO_MIN && cancellazioni.length > noti * FRENO_FRAZIONE) {
+      // il database locale si è svuotato: niente cancellazioni, riscarica tutto
+      for (const d of cancellazioni) delete snap(d.collection)[d.record_id];
+      syncState.serverCursor = null;
+      syncState.cursor = EPOCH;
+      warning = `Su questo dispositivo mancano ${cancellazioni.length} record che il cloud ha ancora: non li cancello dal cloud, li riscarico.`;
+      pending = true;
+    } else {
+      upserts.push(...cancellazioni);
     }
 
     // 3. PUSH

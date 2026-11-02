@@ -384,7 +384,7 @@ function collega (radice) {
 
   qs('#btn-azzera', radice).addEventListener('click', async () => {
     const ok = await conferma(
-      'Cancello libri, citazioni, collegamenti, sessioni di studio e desideri. Se non hai un file di backup, non si torna indietro.',
+      'Cancello libri, citazioni, collegamenti, sessioni di studio e desideri da questo dispositivo. Se la sincronizzazione cloud è attiva, il cloud non viene toccato e alla prossima sincronizzazione i dati tornano. Senza cloud e senza un file di backup, non si torna indietro.',
       { titolo: 'Cancellare tutto?', ok: 'Cancella tutto', pericolo: true });
     if (!ok) return;
     const ancora = await conferma('Ultima conferma: davvero tutto?', { titolo: 'Sicuro?', ok: 'Sì, cancella', pericolo: true });

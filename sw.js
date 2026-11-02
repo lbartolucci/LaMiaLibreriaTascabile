@@ -8,7 +8,7 @@
      catalog.js con la sua cache su IndexedDB (che ha una scadenza vera).
    ========================================================================= */
 
-const VERSIONE = 'v1.4.1';   // sync: pull su server_at (modifiche offline)
+const VERSIONE = 'v1.4.2';   // sync: stato riletto e per account, freno sulle cancellazioni di massa
 const CACHE_GUSCIO = `guscio-${VERSIONE}`;
 const CACHE_IMMAGINI = 'immagini-v1';
 

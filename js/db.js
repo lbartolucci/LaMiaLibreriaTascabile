@@ -265,7 +265,17 @@ export async function esportaTutto () {
 /** Svuota tutti gli store tranne le impostazioni. */
 export async function azzeraDati ({ tieniImpostazioni = true } = {}) {
   const imp = tieniImpostazioni ? await impostazioni() : null;
+  // l'accesso al cloud descrive il dispositivo, non i dati: resta. Lo stato
+  // della sincronizzazione (sync.state) invece se ne va con i dati, così la
+  // prossima sincronizzazione riparte da zero e riscarica invece di credere
+  // che i record spariti siano stati cancellati.
+  const accesso = [];
+  for (const chiave of ['sync.config', 'sync.session']) {
+    const r = await leggi('meta', chiave);
+    if (r) accesso.push(r);
+  }
   for (const nome of NOMI_STORE) await svuota(nome);
   if (imp) await scrivi('meta', { chiave: 'impostazioni', valore: imp });
+  for (const r of accesso) await scrivi('meta', r);
   await incrementaRevisione();
 }
