@@ -8,7 +8,7 @@
      catalog.js con la sua cache su IndexedDB (che ha una scadenza vera).
    ========================================================================= */
 
-const VERSIONE = 'v1.4.0';   // + sincronizzazione cloud Supabase
+const VERSIONE = 'v1.4.1';   // sync: pull su server_at (modifiche offline)
 const CACHE_GUSCIO = `guscio-${VERSIONE}`;
 const CACHE_IMMAGINI = 'immagini-v1';
 

@@ -215,7 +215,8 @@ function collegaSync (radice) {
     on('sy-signup', () => auth('signup', 'sy-signup'));
     on('sy-now', async () => {
       const r = await sync.syncNow();
-      if (r.ok) avviso(`Sincronizzato. ${r.pushed || 0} inviati${r.pulledChanged ? ', modifiche scaricate' : ''}.`, 'ok');
+      if (r.ok && r.warning) avviso(r.warning, 'info', 9000);
+      else if (r.ok) avviso(`Sincronizzato. ${r.pushed || 0} inviati${r.pulledChanged ? ', modifiche scaricate' : ''}.`, 'ok');
       else if (r.reason === 'offline') avviso('Offline — sincronizzerò appena torna la rete.', 'info');
       else if (r.error) avviso('Errore sync: ' + r.error, 'errore', 6000);
     });

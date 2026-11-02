@@ -17,6 +17,12 @@
      (soft-delete). Modifiche/eliminazioni locali sono rilevate confrontando
      con uno snapshot dell'ultimo stato riconciliato, così non serve agganciare
      ogni punto di cancellazione.
+   · Pull incrementale su `server_at`, l'ora di ARRIVO sul server assegnata da
+     un trigger (v1.4.1). Non su `updated_at`: quello è l'ora della modifica
+     sul dispositivo, e una modifica fatta offline arriva sul server con un
+     `updated_at` già alle spalle del cursore degli altri dispositivi, che non
+     la scaricherebbero mai. Se la colonna manca (schema non migrato) si
+     ripiega sul vecchio pull e lo si segnala.
 
    La anon key incollata dall'utente è PUBBLICA e si può salvare sul dispositivo
    senza rischi: con la RLS è inutile senza un utente autenticato, e ogni riga è
@@ -35,6 +41,18 @@ const EPOCH = '1970-01-01T00:00:00.000Z';
 // caricati E restituiti dal pull gt.EPOCH di un altro dispositivo. Essendo
 // stabile (non now()), non viene ri-pushata a ogni sync.
 const MIN_TS = '1970-01-01T00:00:00.001Z';
+const PAGE = 1000;
+// Il pull riparte da (cursore − margine): le righe di un upsert ancora in corso
+// su un altro dispositivo diventano visibili solo al commit, con un server_at
+// che può essere già alle spalle del cursore. Rileggerle è innocuo (merge
+// idempotente), perderle no.
+const OVERLAP_MS = 2 * 60 * 1000;
+const AVVISO_SCHEMA = 'Schema Supabase da aggiornare: esegui di nuovo lo script SQL di SUPABASE_SETUP.md (colonna server_at). Fino ad allora le modifiche fatte offline possono non arrivare agli altri dispositivi.';
+
+/** I timestamp che tornano dal server sono nel formato di Postgres: da zero a
+ *  sei decimali (gli zeri finali li toglie). Date.parse garantisce solo il
+ *  formato a tre (Safari è il più severo): li riportiamo a tre. */
+const parseTs = s => Date.parse(String(s).replace(/\.(\d+)/, (_, f) => '.' + (f + '00').slice(0, 3)));
 
 /* adattatori al db locale (nomi italiani) */
 const dbAll = s => db.tutti(s);
@@ -181,20 +199,18 @@ export async function syncNow ({ silent = false } = {}) {
   running = true;
   setStatus({ state: 'syncing', error: '' });
   let changedLocal = false;
+  let warning = '';
   try {
     // 0. garantisci un timestamp reale a ogni record locale
     await normalizeTimestamps();
 
     // 1. PULL
-    let cursor = syncState.cursor || EPOCH;
-    let guard = 0;
-    while (guard++ < 50) {
-      const rows = await http(`/rest/v1/records?app=eq.${APP}&updated_at=gt.${encodeURIComponent(cursor)}&order=updated_at.asc&limit=1000`, { auth: true });
-      if (!rows || !rows.length) break;
-      for (const r of rows) { if (await mergeRemote(r)) changedLocal = true; }
-      cursor = rows[rows.length - 1].updated_at;
-      syncState.cursor = cursor;
-      if (rows.length < 1000) break;
+    try {
+      changedLocal = await pullByServerTime();
+    } catch (e) {
+      if (!isMissingServerAt(e)) throw e;
+      warning = AVVISO_SCHEMA;
+      changedLocal = await pullLegacy();
     }
 
     // 2. local changes + deletes → upserts
@@ -207,7 +223,7 @@ export async function syncNow ({ silent = false } = {}) {
         const id = rec.id; if (id == null) continue; present.add(id);
         const iso = isoOf(rec);
         const known = snap(c)[id];
-        if (known == null || Date.parse(known) !== Date.parse(iso)) upserts.push(rowFor(c, id, rec, iso, false));
+        if (known == null || parseTs(known) !== Date.parse(iso)) upserts.push(rowFor(c, id, rec, iso, false));
       }
       for (const id of Object.keys(snap(c))) {
         if (present.has(id)) continue;
@@ -230,8 +246,9 @@ export async function syncNow ({ silent = false } = {}) {
 
     await saveState();
     if (changedLocal) await store.carica();
-    setStatus({ state: 'synced', lastSync: Date.now(), error: '', email: session.user.email });
-    return { ok: true, pulledChanged: changedLocal, pushed: upserts.length };
+    if (warning) console.warn(warning);
+    setStatus({ state: 'synced', lastSync: Date.now(), error: '', warning, email: session.user.email });
+    return { ok: true, pulledChanged: changedLocal, pushed: upserts.length, warning };
   } catch (e) {
     console.error('Sync error', e);
     setStatus({ state: 'error', error: e.message || String(e) });
@@ -246,11 +263,60 @@ function rowFor (collection, record_id, data, updated_at, deleted) {
   return { user_id: session.user.id, app: APP, collection, record_id, data, updated_at, deleted };
 }
 
+/* ------------------------------------------------------------------ pull - */
+
+/** Valore per un filtro PostgREST dentro or=(…): fra virgolette doppie, perché
+ *  timestamp e id contengono caratteri riservati ( : , . | ). */
+const pgq = v => '"' + String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+
+/** Pull su server_at con paginazione a chiave (server_at, collection,
+ *  record_id): esatta anche quando molte righe hanno lo stesso server_at,
+ *  cosa che con un semplice `gt` sul timestamp farebbe saltare righe a cavallo
+ *  di due pagine. */
+async function pullByServerTime () {
+  const cur = syncState.serverCursor;
+  const from = cur ? new Date(parseTs(cur.at) - OVERLAP_MS).toISOString() : EPOCH;
+  let after = null, changed = false, guard = 0;
+  while (guard++ < 500) {
+    const filtro = after
+      ? 'or=' + encodeURIComponent(`(server_at.gt.${pgq(after.at)},` +
+          `and(server_at.eq.${pgq(after.at)},collection.gt.${pgq(after.collection)}),` +
+          `and(server_at.eq.${pgq(after.at)},collection.eq.${pgq(after.collection)},record_id.gt.${pgq(after.id)}))`)
+      : 'server_at=gt.' + encodeURIComponent(from);
+    const rows = await http(`/rest/v1/records?app=eq.${APP}&${filtro}&order=server_at.asc,collection.asc,record_id.asc&limit=${PAGE}`, { auth: true });
+    if (!rows || !rows.length) break;
+    for (const r of rows) { if (await mergeRemote(r)) changed = true; }
+    const last = rows[rows.length - 1];
+    after = { at: last.server_at, collection: last.collection, id: last.record_id };
+    syncState.serverCursor = after;
+    if (rows.length < PAGE) break;
+  }
+  return changed;
+}
+
+/** Il pull di prima, per uno schema senza server_at. */
+async function pullLegacy () {
+  let cursor = syncState.cursor || EPOCH;
+  let changed = false, guard = 0;
+  while (guard++ < 50) {
+    const rows = await http(`/rest/v1/records?app=eq.${APP}&updated_at=gt.${encodeURIComponent(cursor)}&order=updated_at.asc&limit=${PAGE}`, { auth: true });
+    if (!rows || !rows.length) break;
+    for (const r of rows) { if (await mergeRemote(r)) changed = true; }
+    cursor = rows[rows.length - 1].updated_at;
+    syncState.cursor = cursor;
+    if (rows.length < PAGE) break;
+  }
+  return changed;
+}
+
+const isMissingServerAt = e => !!e && e.status === 400 &&
+  ((e.data && e.data.code === '42703') || /server_at/.test(e.message || ''));
+
 async function mergeRemote (r) {
-  const c = r.collection, id = r.record_id, rMs = Date.parse(r.updated_at);
+  const c = r.collection, id = r.record_id, rMs = parseTs(r.updated_at);
   if (!COLLECTIONS.includes(c)) return false;
   const local = await dbGet(c, id);
-  const localMs = local ? tsMs(local) : (tomb(c)[id] ? Date.parse(tomb(c)[id]) : null);
+  const localMs = local ? tsMs(local) : (tomb(c)[id] ? parseTs(tomb(c)[id]) : null);
   if (r.deleted) {
     if (localMs == null || rMs >= localMs) {
       if (local) await dbDel(c, id);
@@ -258,6 +324,12 @@ async function mergeRemote (r) {
       return !!local;
     }
   } else {
+    // stessa versione già presente (tipicamente riletta nel margine del pull,
+    // o appena inviata da qui): niente da scrivere né da ricaricare
+    if (local && rMs === localMs) { snap(c)[id] = r.updated_at; delete tomb(c)[id]; return false; }
+    // cancellato qui dopo l'ultimo sync: la tombstone parte in questo stesso
+    // giro (con l'ora attuale, quindi più recente), il pull non lo resusciti
+    if (!local && snap(c)[id] != null && !tomb(c)[id]) return false;
     if (!local || rMs >= localMs) {
       await dbPut(c, r.data);
       snap(c)[id] = r.updated_at; delete tomb(c)[id];
